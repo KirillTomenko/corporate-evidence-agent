@@ -118,6 +118,21 @@ def subject_terms(terms):
     }}
 
 
+def faq_object_terms(question):
+    # In a question about a named item, "для ..." describes its intended use.
+    # Keep the item's class as well as its name: a rule can cover every model.
+    head = re.split(r"\s+для\s+", question, maxsplit=1, flags=re.IGNORECASE)[0]
+    names = re.findall(r"[^\W_]+(?:[-‑–][^\W_]+)*", head)
+    named = any(any(c.isalpha() for c in name) and any(c.isdigit() for c in name)
+                for name in names)
+    if not (named or re.search(r'[«"][^»"]+[»"]|[а-яёa-z][А-ЯЁA-Z]', head)):
+        return None
+    terms, _ = query_context(head)
+    anchors = subject_terms(terms) - {"проверк", "тестовый", "тестовая", "тестовое"}
+    # word_base preserves the genitive plural, e.g. "приборов".
+    return anchors | {term + "ов" for term in anchors if re.search(r"[бвгджзклмнпрстфхцчшщ]$", term)}
+
+
 def same_subject(row, subjects):
     words = re.findall(r"[^\W_]+", row["text"].casefold())
     bases = {word_base(w) for w in words}
@@ -145,7 +160,7 @@ def incompatible(left, right):
     return any(f == g and x != y for f, x in signatures(left) for g, y in signatures(right))
 
 
-def retrieve(question, calls, *, root=ROOT, selected_doc=None):
+def retrieve(question, calls, *, root=ROOT, selected_doc=None, subjects=None):
     terms, scope = query_context(question)
     if selected_doc:
         scope = {selected_doc}
@@ -173,7 +188,8 @@ def retrieve(question, calls, *, root=ROOT, selected_doc=None):
     weights = {term: math.log((1 + len(hits)) / (1 + sum(term in m for m in matches.values())))
                for term in terms}
     quality = {fid: (len(m), sum(weights[t] for t in terms if t in m)) for fid, m in matches.items()}
-    subjects = subject_terms(terms)
+    if subjects is None:
+        subjects = subject_terms(terms)
     if subjects and not permission:
         for fid in hits:
             quality[fid] = (same_subject(hits[fid], subjects), *quality[fid])
@@ -287,14 +303,15 @@ def ask(question, llm, *, root=ROOT, selected_doc=None):
         consultation = quality.approved(question, selected_doc, root=root)
     except (OSError, ValueError, sqlite3.Error):
         return finish("ERROR", "Не удалось проверить базу службы качества.", error_kind="quality")
+    terms, _ = query_context(question)
+    subjects = faq_object_terms(question) if consultation is not None else None
+    subjects = subjects or subject_terms(terms)
     try:
-        evidence = retrieve(question, calls, root=root, selected_doc=selected_doc)
+        evidence = retrieve(question, calls, root=root, selected_doc=selected_doc, subjects=subjects)
     except ReviewRequired as exc:
         return finish("NEEDS_REVIEW", str(exc))
     except (OSError, ValueError, sqlite3.Error) as exc:
         return finish("NEEDS_REVIEW", f"Ошибка проверки источника: {exc}", error_kind="source")
-    terms, _ = query_context(question)
-    subjects = subject_terms(terms)
     if not before_contract(question) and subjects:
         evidence = [r for r in evidence if same_subject(r, subjects)]
     if consultation is not None:

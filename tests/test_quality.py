@@ -10,6 +10,7 @@ from streamlit.testing.v1 import AppTest
 import agent
 from evidence import FILES, index_documents
 import quality
+import quality_mail
 
 
 Q = "Где получить калибратор?"
@@ -117,12 +118,18 @@ def test_streamlit_quality_roundtrip(monkeypatch, tmp_path):
     monkeypatch.setattr(agent, "ask", lambda *a, **kw: original_ask(*a, **kw, root=tmp_path))
     submit = Mock(side_effect=lambda *args: original_submit(*args, root=tmp_path))
     monkeypatch.setattr(quality, "submit", submit)
+    monkeypatch.delenv("CEA_SMTP_ENABLED", raising=False)
+    original_notify = quality_mail.notify
+    notify = Mock(side_effect=lambda ticket: original_notify(ticket, root=tmp_path))
+    monkeypatch.setattr(quality_mail, "notify", notify)
     page = AppTest.from_file(str(agent.ROOT / "app.py")).run()
     page.text_area[0].set_value(Q)
     page.button[0].click().run()
     page.button[1].click().run()
     page.run()
     submit.assert_called_once()
+    notify.assert_called_once()
+    assert quality_mail.MESSAGES["DISABLED"] in [t.value for t in page.text]
     assert not page.exception and "ещё не получен" in page.success[0].value
     quality.approve(page.session_state["ticket"], "operator", ANSWER, root=tmp_path)
     page.button[0].click().run()

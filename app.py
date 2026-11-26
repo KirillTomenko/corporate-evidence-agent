@@ -10,6 +10,7 @@ import streamlit as st
 
 import agent
 import quality
+import quality_mail
 
 
 UNKNOWN = "Актуальность и применимость регламента не подтверждены."
@@ -122,6 +123,7 @@ def main():
         st.session_state.clarifications = []
         st.session_state.quality_scope = None
         st.session_state.pop("ticket", None)
+        st.session_state.pop("mail_notice", None)
         if not 1 <= len(question) <= 600:
             st.warning("Введите вопрос длиной до 600 символов.")
         else:
@@ -173,9 +175,16 @@ def main():
                         st.warning(str(exc))
                     except (sqlite3.Error, OSError, ValueError):
                         st.error("Не удалось зарегистрировать обращение. Попробуйте позже.")
+                    else:
+                        try:
+                            state = quality_mail.notify(st.session_state.ticket)
+                            st.session_state.mail_notice = quality_mail.MESSAGES[state]
+                        except Exception:
+                            st.session_state.mail_notice = "Состояние отправки письма не подтверждено. Обратитесь к оператору."
                 if "ticket" in st.session_state:
                     st.success(f"Обращение №{st.session_state.ticket} зарегистрировано. "
                                "На момент передачи ответ эксперта ещё не получен.")
+                    st.text(st.session_state.get("mail_notice", "Состояние отправки письма не подтверждено."))
 
 
 if __name__ == "__main__":

@@ -40,6 +40,7 @@ def store(root, *, write=False):
                 scope TEXT NOT NULL, reason TEXT NOT NULL, created INTEGER NOT NULL DEFAULT (unixepoch()),
                 status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN','APPROVED')),
                 answer TEXT, expert TEXT, approved_at TEXT, basis TEXT)""")
+            db.execute("CREATE TABLE IF NOT EXISTS mail (ticket INTEGER PRIMARY KEY, state TEXT NOT NULL)")
         yield db
 
 
@@ -90,6 +91,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("list", help="Последние 100 открытых обращений")
     commands.add_parser("show").add_argument("id", type=int)
+    commands.add_parser("retry-mail", help="Повторить неотправленное уведомление").add_argument("id", type=int)
     publish = commands.add_parser("approve", help="Утвердить текст для показа сотрудникам")
     publish.add_argument("id", type=int)
     publish.add_argument("--expert", required=True)
@@ -97,12 +99,18 @@ def main():
     publish.add_argument("--basis")
     args = parser.parse_args()
     try:
+        if args.command == "retry-mail":
+            from quality_mail import MESSAGES, notify
+            state = notify(args.id, retry=True, root=ROOT)
+            print(f"№{args.id} · {state}. {MESSAGES[state]}")
+            return
         if args.command == "approve":
             approve(args.id, args.expert, args.answer, args.basis, root=ROOT)
             print(f"Обращение №{args.id}: APPROVED")
             return
         with store(ROOT, write=True) as db:
-            columns = "SELECT id, question, scope, reason, status, answer, expert, approved_at, basis FROM tickets"
+            columns = """SELECT id, question, scope, reason, status, answer, expert, approved_at, basis,
+                         (SELECT state FROM mail WHERE ticket=tickets.id) AS mail_state FROM tickets"""
             if args.command == "show":
                 rows = db.execute(columns + " WHERE id=?", (args.id,)).fetchall()
                 if not rows:

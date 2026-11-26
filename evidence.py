@@ -129,14 +129,15 @@ def result(row):
     return dict(row) | {"filename": FILES[row["doc_id"]]}
 
 
-def search_documents(query, limit=10, *, root=ROOT, match_any=False, doc_ids=None):
+def search_documents(query, limit=10, *, root=ROOT, match_any=False, doc_ids=None, prefix=False):
     if limit < 1:
         raise ValueError("Лимит должен быть положительным.")
     tokens = re.findall(r"[^\W_]+", query, re.UNICODE)
     if not tokens:
         return []
     operator = " OR " if match_any else " AND "
-    match = operator.join(f'"{token}"' for token in tokens)
+    suffix = "*" if prefix else ""
+    match = operator.join(f'"{token}"{suffix}' for token in tokens)
     filters = " WHERE fragments MATCH ?"
     params = [match]
     if doc_ids is not None:

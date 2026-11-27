@@ -43,7 +43,7 @@ def test_open_to_approved_and_exact_reuse(tmp_path):
 
 @pytest.mark.parametrize("confirmed", [True, False])
 @pytest.mark.parametrize("conflict", [True, False])
-def test_regulation_takes_priority(tmp_path, confirmed, conflict):
+def test_approved_faq_takes_priority(tmp_path, confirmed, conflict):
     directory = tmp_path / "corpus"
     directory.mkdir()
     doc = Document()
@@ -59,12 +59,10 @@ def test_regulation_takes_priority(tmp_path, confirmed, conflict):
     quality.approve(ticket, "operator", advice, root=tmp_path)
     llm = Mock()
     result = agent.ask(Q, llm, root=tmp_path)
-    if conflict:
-        assert result["status"] == "NEEDS_REVIEW" and result["answer"] is None
-        assert "противоречие" in result["reason"] and "p1" in result["reason"]
-        assert result["evidence"][0]["text"] == claim
-    else:
-        assert result["status"] == "FAQ" and result["answer"] == advice
+    assert result["status"] == "FAQ" and result["answer"] == advice
+    assert result["reason"] == "Утверждённый ответ службы качества"
+    assert result["evidence"] == [] and result["cited_fragment_id"] is None
+    assert result["calls"] == {"search": 0, "read": 0, "llm": 0}
     llm.assert_not_called()
 
 

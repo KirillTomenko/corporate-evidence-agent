@@ -118,21 +118,6 @@ def subject_terms(terms):
     }}
 
 
-def faq_object_terms(question):
-    # In a question about a named item, "для ..." describes its intended use.
-    # Keep the item's class as well as its name: a rule can cover every model.
-    head = re.split(r"\s+для\s+", question, maxsplit=1, flags=re.IGNORECASE)[0]
-    names = re.findall(r"[^\W_]+(?:[-‑–][^\W_]+)*", head)
-    named = any(any(c.isalpha() for c in name) and any(c.isdigit() for c in name)
-                for name in names)
-    if not (named or re.search(r'[«"][^»"]+[»"]|[а-яёa-z][А-ЯЁA-Z]', head)):
-        return None
-    terms, _ = query_context(head)
-    anchors = subject_terms(terms) - {"проверк", "тестовый", "тестовая", "тестовое"}
-    # word_base preserves the genitive plural, e.g. "приборов".
-    return anchors | {term + "ов" for term in anchors if re.search(r"[бвгджзклмнпрстфхцчшщ]$", term)}
-
-
 def same_subject(row, subjects):
     words = re.findall(r"[^\W_]+", row["text"].casefold())
     bases = {word_base(w) for w in words}
@@ -303,9 +288,10 @@ def ask(question, llm, *, root=ROOT, selected_doc=None):
         consultation = quality.approved(question, selected_doc, root=root)
     except (OSError, ValueError, sqlite3.Error):
         return finish("ERROR", "Не удалось проверить базу службы качества.", error_kind="quality")
+    if consultation is not None:
+        return finish("FAQ", "Утверждённый ответ службы качества", consultation)
     terms, _ = query_context(question)
-    subjects = faq_object_terms(question) if consultation is not None else None
-    subjects = subjects or subject_terms(terms)
+    subjects = subject_terms(terms)
     try:
         evidence = retrieve(question, calls, root=root, selected_doc=selected_doc, subjects=subjects)
     except ReviewRequired as exc:
@@ -314,21 +300,6 @@ def ask(question, llm, *, root=ROOT, selected_doc=None):
         return finish("NEEDS_REVIEW", f"Ошибка проверки источника: {exc}", error_kind="source")
     if not before_contract(question) and subjects:
         evidence = [r for r in evidence if same_subject(r, subjects)]
-    if consultation is not None:
-        candidates = evidence
-        if before_contract(question):
-            candidates = [r for r in evidence if work_rule_rank(r["text"])]
-        for row in candidates:
-            ref = f"{row['filename']} · {row['locator']}"
-            if incompatible(consultation, row["text"]):
-                return finish("NEEDS_REVIEW", f"Обнаружено противоречие между FAQ и положением {ref}.")
-        if any(passage(r["text"]) != consultation.strip() for r in candidates):
-            return finish("NEEDS_REVIEW", "Найден нормативный фрагмент по предмету вопроса. "
-                          "Согласованность консультации с ним требует экспертной проверки.")
-        # Empty set, or every relevant passage literally agrees. The only
-        # published text is the approved consultation, with its own provenance.
-        evidence = []
-        return finish("FAQ", "Утверждённый ответ службы качества", consultation)
     if not evidence:
         return finish("NO_EVIDENCE", "Не найдено оснований по предмету вопроса.")
     if any(len(e["text"]) > 1400 for e in evidence):

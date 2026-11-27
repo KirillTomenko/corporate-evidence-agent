@@ -202,6 +202,27 @@ def passage(text):
     return re.sub(r"^\s*\d+(?:\.\d+)*\.\s+", "", text).strip()
 
 
+def opposite_permission(advice, rule):
+    """Compare complete simple directives, preserving identifiers and conditions."""
+    # Accept only a bare infinitive phrase with a leading or trailing modal.
+    # Do not extract clauses from explanations, quotations or exceptions.
+    action = r"[А-Яа-яЁё]+(?:ть|ти|чь)(?:ся)?(?: [\w-]+)+"
+    modal = r"(разрешено|запрещено)"
+    def parts(text):
+        text = " ".join(text.strip().removesuffix(".").split())
+        text = text[:1].lower() + text[1:]
+        match = re.fullmatch(modal + " (" + action + ")", text)
+        if match:
+            return match[1], match[2]
+        match = re.fullmatch("(" + action + ") " + modal, text)
+        if match:
+            return match[2], match[1]
+        return None
+
+    left, right = parts(advice), parts(passage(rule))
+    return bool(left and right and left[0] != right[0] and left[1] == right[1])
+
+
 class LocalOllama:
     def __init__(self, model, *, diagnose=False, deadline=None):
         if not re.fullmatch(r"[\w.-]+(?::[\w.-]+)?", model) or "cloud" in model.lower():
@@ -289,6 +310,21 @@ def ask(question, llm, *, root=ROOT, selected_doc=None):
     except (OSError, ValueError, sqlite3.Error):
         return finish("ERROR", "Не удалось проверить базу службы качества.", error_kind="quality")
     if consultation is not None:
+        _, scopes = query_context(question)
+        faq_doc = selected_doc or (next(iter(scopes)) if len(scopes) == 1 else None)
+        if faq_doc:
+            try:
+                rows = retrieve(question, calls, root=root, selected_doc=faq_doc)
+            except (ReviewRequired, OSError, ValueError, sqlite3.Error):
+                return finish("FAQ", "Проверку по регламенту завершить не удалось.", consultation)
+            for row in rows:
+                if (row["doc_id"] == faq_doc and row["applicability"] == "confirmed"
+                        and (row["applicability_basis"] or "").strip()
+                        and opposite_permission(consultation, row["text"])):
+                    evidence = [row]
+                    review = finish("NEEDS_REVIEW", "Возможно противоречие с регламентом. "
+                                    "До применения требуется разбор службой качества.")
+                    return review | {"expert_answer": consultation}
         return finish("FAQ", "Утверждённый ответ службы качества", consultation)
     terms, _ = query_context(question)
     subjects = subject_terms(terms)

@@ -7,6 +7,21 @@ import agent
 from app import UNKNOWN
 
 
+def test_conflicting_faq_offers_escalation(monkeypatch):
+    row = {"filename": "Учебный.docx", "locator": "p1", "text": "Выдавать прибор запрещено.",
+           "applicability": "confirmed", "fragment_id": "demo"}
+    result = {"status": "NEEDS_REVIEW", "reason": "Возможно противоречие с регламентом.",
+              "expert_answer": "Выдавать прибор разрешено.", "elapsed_seconds": 0, "evidence": [row]}
+    monkeypatch.setattr(agent, "ask", Mock(return_value=result))
+    page = AppTest.from_file(str(agent.ROOT / "app.py")).run()
+    page.text_area[0].set_value("Можно ли выдавать прибор?")
+    page.button[0].click().run()
+    assert not page.exception and page.warning[0].value == result["reason"]
+    texts = [item.value for item in page.text]
+    assert texts.index(result["expert_answer"]) < texts.index("Учебный.docx · p1") < texts.index(row["text"])
+    assert any(button.label == "Передать в службу качества" for button in page.button)
+
+
 @pytest.mark.parametrize(("status", "widget", "label"), [
     ("ANSWERED", "success", "Ответ подтверждён"),
     ("NEEDS_REVIEW", "warning", "Требуется проверка"),

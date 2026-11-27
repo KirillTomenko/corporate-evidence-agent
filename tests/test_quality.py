@@ -86,6 +86,41 @@ def test_action_only_matches_do_not_block_exact_faq(tmp_path):
     llm.assert_not_called()
 
 
+@pytest.mark.parametrize(("advice", "rule", "basis", "review"), [
+    ("Выдавать прибор разрешено.", "Выдавать прибор разрешено.", "Тест", False),
+    ("Выдавать прибор разрешено.", "Выдавать прибор запрещено.", "Тест", True),
+    ("Выдавать прибор разрешено.", "Выдавать прибор запрещено.", "", False),
+    ("Выдавать прибор через 3 дня разрешено.", "Выдавать прибор через 5 дней запрещено.", "Тест", False),
+    ("Выдавать прибор разрешено.", "Выдавать прибор без заявки запрещено.", "Тест", False),
+])
+@pytest.mark.parametrize("selected", [True, False])
+def test_scoped_faq_permission(tmp_path, advice, rule, basis, review, selected):
+    scope = "dbrct-project"
+    question = "Можно ли выдавать прибор?" if selected else "Можно ли выдавать прибор в ДБРЦТ?"
+    folder = tmp_path / "corpus"
+    folder.mkdir()
+    doc = Document()
+    doc.add_paragraph("1. " + rule)
+    doc.save(folder / FILES[scope])
+    index_documents(tmp_path)
+    with sqlite3.connect(tmp_path / "data/evidence.sqlite3") as db:
+        db.execute("UPDATE documents SET applicability='confirmed', applicability_basis=?", (basis,))
+    selected_doc = scope if selected else None
+    ticket = quality.submit(question, selected_doc, "Тест", "session", root=tmp_path)
+    quality.approve(ticket, "demo", advice, root=tmp_path)
+    result = agent.ask(question, Mock(side_effect=AssertionError), selected_doc=selected_doc, root=tmp_path)
+    assert result["calls"] == {"search": 2, "read": 1, "llm": 0}
+    assert result["cited_fragment_id"] is None
+    if review:
+        assert result["status"] == "NEEDS_REVIEW" and result["answer"] is None
+        assert result["expert_answer"] == advice
+        row, = result["evidence"]
+        assert (row["text"], row["locator"], row["doc_id"]) == ("1. " + rule, "p1", scope)
+    else:
+        assert result["status"] == "FAQ" and result["answer"] == advice
+        assert not result["evidence"]
+
+
 def test_local_operator_commands(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(quality, "ROOT", tmp_path)
     ticket = quality.submit(Q, None, "Требуется консультация", "demo", root=tmp_path)

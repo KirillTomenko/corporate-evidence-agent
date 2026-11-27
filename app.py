@@ -76,7 +76,16 @@ def show_result(question, result):
     elif status == "FAQ":
         st.info("Утверждённый ответ службы качества")
         st.text(result["answer"])
+        if result["reason"] != "Утверждённый ответ службы качества":
+            st.caption(result["reason"])
         st.caption("Экспертная консультация. Актуальность и применимость регламента требуют отдельной проверки.")
+    elif status == "NEEDS_REVIEW" and "expert_answer" in result:
+        st.warning(result["reason"])
+        st.markdown("**Утверждённое разъяснение службы качества**")
+        st.text(result["expert_answer"])
+        st.markdown("**Проверенный фрагмент регламента**")
+        show_source(rows[0])
+        rows = []
     elif status == "NO_EVIDENCE":
         st.info("Достаточное основание не найдено. Рекомендуем обратиться в службу качества.")
     elif status == "ANSWERED" and cited and cited["applicability"] == "confirmed":
@@ -154,7 +163,8 @@ def main():
                     try:
                         advice = quality.approved(original, "unspecified")
                         if advice is not None:
-                            result.update(status="FAQ", answer=advice)
+                            result.update(status="FAQ", answer=advice,
+                                          reason="Область не определена. Сверка с регламентом не выполнена.")
                     except (sqlite3.Error, OSError):
                         result.update(status="ERROR", reason=ERRORS["quality"])
                 st.session_state.last_result = (original, result)

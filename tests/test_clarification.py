@@ -9,6 +9,21 @@ import agent
 QUESTION = "Можно ли начинать работы до подписания договора?"
 
 
+def test_unspecified_approved_faq_skips_retrieval(monkeypatch):
+    approved = Mock(return_value="Уточните процесс у ответственного.")
+    monkeypatch.setattr(agent.quality, "approved", approved)
+    monkeypatch.setattr(agent, "retrieve", Mock(side_effect=AssertionError))
+    page = AppTest.from_file(str(agent.ROOT / "app.py")).run()
+    page.text_area[0].set_value(QUESTION)
+    page.button[0].click().run()
+    page.radio[0].set_value(agent.UNSPECIFIED)
+    page.button[1].click().run()
+    approved.assert_called_once_with(QUESTION, "unspecified")
+    assert not page.exception and page.session_state["last_result"][1]["status"] == "FAQ"
+    assert approved.return_value in [item.value for item in page.text]
+    assert any("Сверка с регламентом не выполнена" in item.value for item in page.caption)
+
+
 def test_clarification_costs_no_agent_calls():
     llm = Mock()
     result = agent.ask(QUESTION, llm)
